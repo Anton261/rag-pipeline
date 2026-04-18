@@ -414,15 +414,21 @@ After generation, the hallucination filter scans every sentence in the answer ag
 
 **Algorithm:**
 1. Split the answer into sentences (regex on `. ` / `? ` / `! ` boundaries)
-2. Send all sentences + source passages in a **single** batched `mistral-small` call (not per-sentence — that would be N API calls)
-3. The model returns `{"results": [{"idx": 0, "supported": true}, ...]}` for each sentence
-4. Unsupported sentences are wrapped in `[UNVERIFIED: ...]` tags
-5. If > 40% of sentences are unsupported → `has_hallucination_warning = true`
+2. Strip `[N]` citation markers from sentences before checking — these confuse the entailment model but the underlying claim is still verified
+3. Send all sentences + source passages (600 chars each) in a **single** batched `mistral-small` call
+4. The model returns `{"results": [{"idx": 0, "supported": true}, ...]}` for each sentence
+5. Unsupported sentences are tagged with `{{UNVERIFIED}}...{{/UNVERIFIED}}` delimiters (using double braces to avoid conflict with `[N]` citation brackets)
+6. If > 40% of sentences are unsupported → `has_hallucination_warning = true`
+7. Medical/legal disclaimers are appended **after** the hallucination filter runs, so they are never checked against passages
 
 **Design decisions:**
-- **Checks against sources, not world knowledge:** a sentence like "Philippa Foot published the trolley problem in 1967" is flagged as `[UNVERIFIED]` if the year 1967 does not appear in the retrieved passages — even though it is factually correct. This is intentional: a grounded RAG system should only assert what its sources support.
-- **Fail-open on errors:** if the API call fails or JSON parsing breaks, all sentences are marked as supported. Better to show an unverified answer than to crash.
+- **All sentences are checked, even cited ones:** the generator can hallucinate both a fact and a citation. A sentence with `[2]` might reference a passage that doesn't actually contain the claimed information. The filter strips `[N]` markers and verifies the claim itself.
+- **Passage preview length (600 chars) exceeds the generator's (500 chars):** this ensures the filter sees at least as much text as the generator used, preventing false positives from truncated passages.
+- **Checks against sources, not world knowledge:** a sentence like "Philippa Foot published the trolley problem in 1967" is flagged if the year 1967 does not appear in the retrieved passages — even though it is factually correct. A grounded RAG system should only assert what its sources support.
+- **Fail-open on errors:** if the API call fails, all sentences are marked as supported. Better to show an unverified answer than to crash.
 - **40% threshold:** if 1 out of 5 sentences is unverified, it may be an acceptable paraphrase. If 3+ out of 5 are unverified, the answer is likely hallucinated.
+
+**UI rendering:** for prose and list answers, unverified sentences are highlighted inline with a yellow background. For table answers (where inline HTML breaks markdown), unverified claims are shown as separate warning boxes below the table.
 
 **Validation:**
 
@@ -433,11 +439,11 @@ After generation, the hallucination filter scans every sentence in the answer ag
 
 | Sentence | Verdict | Why |
 |---|---|---|
-| "The trolley problem was invented by Philippa Foot in 1967." | `[UNVERIFIED]` | Passages mention Foot but not the year — correctly flagged |
-| "It was later popularized by Judith Jarvis Thomson." | `[UNVERIFIED]` | Thomson not in retrieved passages |
+| "The trolley problem was invented by Philippa Foot in 1967." | Unverified | Passages mention Foot but not the year — correctly flagged |
+| "It was later popularized by Judith Jarvis Thomson." | Unverified | Thomson not in retrieved passages |
 | "The problem involves a trolley heading toward five people on the track." | Supported | Present in the passages |
-| "Albert Einstein famously solved the trolley problem using quantum mechanics." | `[UNVERIFIED]` | Fabricated — caught |
-| "Barack Obama referenced it in his 2015 State of the Union address." | `[UNVERIFIED]` | Fabricated — caught |
+| "Albert Einstein famously solved the trolley problem using quantum mechanics." | Unverified | Fabricated — caught |
+| "Barack Obama referenced it in his 2015 State of the Union address." | Unverified | Fabricated — caught |
 
 Result: 4/5 unsupported (80%) → `has_hallucination_warning: true`
 
@@ -508,6 +514,29 @@ Queries over 2,000 characters are refused to prevent context stuffing.
 
 ---
 
+## Chat UI (`frontend/app.py`)
+
+The frontend is a Streamlit application that communicates with the FastAPI backend.
+
+**Layout:**
+- **Sidebar** — lists ingested documents with chunk/page counts, PDF upload with ingestion button, clear chat button
+- **Main area** — multi-turn chat with the knowledge base
+
+**UI features:**
+- **User message shown immediately** while the backend processes the query (spinner in assistant bubble)
+- **Intent badge** below each answer (e.g. `FACTUAL_QA`, `LIST_REQUEST`, `CONVERSATIONAL`)
+- **Inline hallucination highlighting** — unverified sentences highlighted with yellow background and ⚠️ icon in prose/list answers; separate warning boxes for table answers (where inline HTML would break markdown)
+- **Citation expander** — only shows sources actually referenced in the answer (`[N]` citations parsed from text). Each source shows:
+  - Filename, page number, similarity score
+  - Smart snippet that matches answer keywords (not always the first 300 chars of the chunk)
+  - Toggle to show full passage text
+- **Insufficient evidence banner** — amber warning when similarity threshold is not met
+- **Hallucination warning banner** — when > 40% of sentences are unverified
+- **Medical/legal disclaimer** — appended to answers about medical or legal topics
+- **Error handling** — HTTP errors and connection failures shown inline in the chat
+
+---
+
 ## Setup & Running
 
 ### Prerequisites
@@ -536,15 +565,27 @@ docker-compose up --build
 ### 2b. Run locally without Docker
 
 ```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+# Create virtual environment
+python -m venv venv
 
-# Frontend (new terminal)
+# Activate (Windows)
+venv\Scripts\activate
+# Activate (macOS/Linux)
+source venv/bin/activate
+
+# Install all dependencies
+pip install -r backend/requirements.txt -r frontend/requirements.txt
+
+# Copy .env to backend directory
+cp .env backend/.env
+
+# Start backend (terminal 1)
+cd backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Start frontend (terminal 2)
 cd frontend
-pip install -r requirements.txt
-streamlit run app.py
+streamlit run app.py --server.port 8501
 ```
 
 ### 3. Load sample PDFs
