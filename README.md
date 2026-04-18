@@ -546,10 +546,11 @@ The frontend is a Streamlit application that communicates with the FastAPI backe
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/rag-pipeline.git
+git clone https://github.com/Anton261/rag-pipeline.git
 cd rag-pipeline
 cp .env.example .env
-# Edit .env and set MISTRAL_API_KEY=your_key_here
+# Edit .env and set your Mistral API key (no quotes):
+# MISTRAL_API_KEY=your_key_here
 ```
 
 ### 2a. Run with Docker (recommended)
@@ -557,10 +558,6 @@ cp .env.example .env
 ```bash
 docker-compose up --build
 ```
-
-- Backend API: http://localhost:8000
-- Chat UI: http://localhost:8501
-- API docs: http://localhost:8000/docs
 
 ### 2b. Run locally without Docker
 
@@ -583,27 +580,29 @@ cp .env backend/.env
 cd backend
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# Start frontend (terminal 2)
+# Start frontend (terminal 2, from the repo root)
 cd frontend
 streamlit run app.py --server.port 8501
 ```
 
-### 3. Load sample PDFs
+### 3. Access the application
 
-```bash
-# Make sure the backend is running, then:
-python scripts/load_sample_pdfs.py
-```
+| Service | URL |
+|---|---|
+| Chat UI | http://localhost:8501 |
+| Backend API | http://localhost:8000 |
+| API docs (Swagger) | http://localhost:8000/docs |
 
-This ingests Biology, Economics, Philosophy, and Computer Science from the local OpenStax collection. Ingestion takes a few minutes per book due to embedding generation.
+### 4. Upload PDFs and start chatting
 
-### 4. Start chatting
+Upload any PDF documents through the sidebar in the chat UI. You can use any PDFs you have — textbooks, reports, papers, manuals, etc. Ingestion takes a few minutes per large book due to embedding generation.
 
-Open http://localhost:8501 and ask questions like:
-- *"What is DNA replication?"*
-- *"List the main branches of philosophy"*
-- *"Compare microeconomics and macroeconomics in a table"*
+Once documents are ingested, try questions like:
+- *"What is the main topic of chapter 3?"*
+- *"List the key concepts discussed in the document"*
+- *"Summarize the introduction"*
 - *"Hello"* (conversational — no search triggered)
+- *"What is the recipe for pasta?"* (off-topic — insufficient evidence response)
 
 ---
 
